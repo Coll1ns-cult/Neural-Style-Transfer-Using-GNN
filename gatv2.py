@@ -33,7 +33,7 @@ class GATv2Layer(nn.Module):
         self.softmax = nn.Softmax(dim = 1)
         self.dropout = nn.Dropout(dropout)
     def forward(h, adj_mat):
-        num_nodes = h.shape[0]
+        num_nodes = h.shape[1] #since h = NxLxF, where N is batch, L is node, and F is feature vector dimensions respectively
         key = self.Key(h).view(n_nodes, self.n_heads, self.hidden_dim)
         query = self.Query(h).view(n_nodes, self.n_heads, self.hidden_dim)
 

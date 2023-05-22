@@ -12,11 +12,11 @@ Made
  - Implementing other types of graph construction to experiment which suits best for the problem. For example, using Threshold instead of KNN and etc
  
  
- #To Do
+ To Do
  - Implementing Deformable Patch for style graph node construction.
 
 # Results
 Soon
-#Theoritical work
+# Theoritical work
 Soon
 

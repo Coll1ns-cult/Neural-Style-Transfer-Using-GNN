@@ -4,7 +4,7 @@ Replication of Learning Graph Neural Networks for Image Style Transfer (https://
 
 
 Note: Paper has no implementation.
-#Changes
+# Changes
 Made
  - GATv2 instead of GAT, as graph in the network is bipartite graph in which dynamic attention is proved to be effective instead of static attention
  Planning
@@ -14,7 +14,7 @@ Made
  #To Do
  - Implementing Deformable Patch for style graph node construction.
 
-#Results
+# Results
 Soon
 #Theoritical work
 Soon

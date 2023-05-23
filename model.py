@@ -5,9 +5,8 @@ import torch.functional as F
 import torchvision.models as models
 from gatv2 import GATv2Layer
 from adain import AdaIn
-
-
 vgg19 = models.vgg19(pretrained=True)
+
 model_encoder = nn.Sequential()
 # Remove the classification layer
 #Reflection pad placements: afters: ReLU1_1, Relu1_2, relu, relu relu relu relu
@@ -19,10 +18,6 @@ for layer in first_sequential.children():
     if torch.jit.isinstance(layer, nn.Conv2d):
         i += 1
         name = 'conv{}_{}'.format(j, i)
-        # input_dim = layer.in_channels
-        # output_dim = layer.out_channels
-        # kernel_size = layer.kernel_size
-        # layer1 = nn.Conv2d(input_dim, output_dim, kernel_size)
         layer.padding = (0, 0)
         ref_pad_name = 'reflection{}_{}'.format(j, i)
         model_encoder.add_module(ref_pad_name, nn.ReflectionPad2d(1))
@@ -48,6 +43,7 @@ def patch2feat(image, patch_size, patch_stride):
     unfold = nn.Unfold(patch_size, patch_stride)
     patches = unfold(image) #image size: NxC*KxP
     return patches.transpose(1, 2) #dimensions: PxNxC*K
+    # change: should do NxPxC*K so I will delete the first transpose
 
 
 def feat2patch(feature, patch_size, output_size):
@@ -130,7 +126,7 @@ for layer in first_sequential.children():
 
 def knn(t, k, symm = True):
     k += 1
-    if t is tuple:
+    if type(t) is tuple:
         content, style = t
         content = content / torch.norm(content, dim=2, keepdim=True) 
         style = style / torch.norm(style, dim=1, keepdim=True)
@@ -143,11 +139,13 @@ def knn(t, k, symm = True):
         all = torch.cat((content, style), dim = 1)
         
         similarity = torch.matmul(all, all.transpose(1, 2)) # Ncx(l+p)x(l+p)
-        similarity[:, :, (l-1):, (l-1):] = float('-inf')
-        similarity[:, :, :l, :l] = float('-inf')
+        similarity[:, l:, l:] = float('-inf')
+        similarity[:, :l, :l] = float('-inf')
+
 
 
         _, indices = torch.topk(similarity, k, 1, True)
+        indices = indices.transpose(1,2)
 
         total = l+p
         adj_matrix = torch.zeros(nc, total, total)
@@ -155,22 +153,40 @@ def knn(t, k, symm = True):
 
         if not symm:
             adj_matrix[:, (l-1):, :l] = 0
+        return adj_matrix
     else:
         content = t
         content = content / torch.norm(content, dim=2, keepdim=True) 
 
-        nc, l, f = content.shape
-
+        nc, l, f = content.shape #nc, l, f is batch, node, and feature vector dimensions respectively
         similarity = torch.matmul(content, content.transpose(1, 2)) # Ncx(l)x(l)
-
         _, indices = torch.topk(similarity, k, 1, True)
         indices = indices.transpose(1,2)
-        
         adj_matrix = torch.zeros(nc, l, l)
         adj_matrix = adj_matrix.scatter_(2, indices, 1)
-        
-    adj_matrix = adj_matrix.gt(0)
-    return adj_matrix
+        return adj_matrix
+
+def calc_mean_std(feat, eps=1e-5):
+    # eps is a small value added to the variance to avoid divide-by-zero.
+    size = feat.size()
+    assert (len(size) == 4)
+    N, C = size[:2]
+    feat_var = feat.view(N, C, -1).var(dim=2) + eps
+    feat_std = feat_var.sqrt().view(N, C, 1, 1)
+    feat_mean = feat.view(N, C, -1).mean(dim=2).view(N, C, 1, 1)
+    return feat_mean, feat_std
+
+
+def adaptive_instance_normalization(content_feat, style_feat):
+    assert (content_feat.size()[:2] == style_feat.size()[:2])
+    size = content_feat.size()
+    style_mean, style_std = calc_mean_std(style_feat)
+    content_mean, content_std = calc_mean_std(content_feat)
+
+    normalized_feat = (content_feat - content_mean.expand(
+        size)) / content_std.expand(size)
+    return normalized_feat * style_std.expand(size) + style_mean.expand(size)
+
 
 
 class Net(nn.Module):
@@ -190,6 +206,7 @@ class Net(nn.Module):
                 share_weights:bool = False,
                 #whether to use pretrained decoder or not
                 pre_trained_decoder = True,
+                modulated_adain = False
                    ):
         super(self, Net).__init__()
         #encoder-decoder network
@@ -208,7 +225,7 @@ class Net(nn.Module):
         self.k = k
 
         #gat layer class arguments
-        self.in_fetures = in_features #since GATv2 is similar to FCN, we should have a fixed sized images, and patches
+        self.in_fetures = in_features
         self.n_heads = n_heads
         self.dropout = dropout
         self.leaky_relu_slop = leaky_relu_slop
@@ -218,7 +235,10 @@ class Net(nn.Module):
         self.gatlayer2 = GATv2Layer(in_features, in_features, n_heads, is_concat, dropout , leaky_relu_slop, share_weights)
 
         #adaptive instance normalization
-        self.adain = AdaIn()
+        if self.modulated_adain:
+            #initialize input dim with content features:
+            self.adain = AdaIn(256, 128)
+
         
 
     def forward(self, style, content):
@@ -236,18 +256,20 @@ class Net(nn.Module):
 
         updated_nodes = self.gatlayer1((content_patches, style_patches), style_matrix)
 
-        updated_content_patches= updated_nodes[:, content_patches[1]:] 
+        updated_content_patches= updated_nodes[:, :content_patches[1]]
 
-        content_matrix = knn(updated_content_patches, self.k)
+        content_matrix = knn(content_patches, self.k)
         final_content_patches = self.gatlayer2(updated_content_patches, content_matrix)
 
         #feat2patch:
         final_content = feat2patch(final_content_patches)
 
         #adaptive instance normalization:
-        normalized_content = self.adain(final_content, encoded_style)
+        if self.modulated_adain:
+            normalized_content = self.adain(final_content, encoded_style)
+        else:
+            normalized_content = adaptive_instance_normalization(final_content, encoded_style)
 
         output = self.decoder(normalized_content)
 
         return output
-        

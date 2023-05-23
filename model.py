@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.functional as F
 import torchvision.models as models
 from gatv2 import GATv2Layer
-from adain import AdaIn
 vgg19 = models.vgg19(pretrained=True)
 
 model_encoder = nn.Sequential()
@@ -190,32 +189,25 @@ def adaptive_instance_normalization(content_feat, style_feat):
 
 
 class Net(nn.Module):
-    def __init__(self, encoder:nn.Module
-                 , decoder:nn.Module,
-                #patches:
-                patch_stride: int,
-                patch_size: int,
+    def __init__(patch_stride: int = 16,
+                patch_size: int = 2,
                 #value for KNN:
-                k:int,
+                k:int = 5,
                 #gnn inputs:
-                n_heads: int, 
+                n_heads:int = 4,
                 in_features:int = 65536,
                 is_concat: bool = True,
                 dropout: float  = 0.6,
                 leaky_relu_slop: float = 0.2,
                 share_weights:bool = False,
                 #whether to use pretrained decoder or not
-                pre_trained_decoder = True,
-                modulated_adain = False
                    ):
-        super(self, Net).__init__()
+        super(Net, self).__init__()
         #encoder-decoder network
-        self.encoder = encoder
-        self.pre_trained_decoder = pre_trained_decoder
-        if pre_trained_decoder:
-            self.decoder = decoder #pretrained decoder
-        else:
-            self.decoder = decoder() #instance of decoder class that is created above
+        self.encoder = model_encoder
+        for params in self.encoder.parameters:
+            params.requires_grad = False
+        self.decoder = decoder() #instance of decoder class that is created above
 
         #feat2patch, patch2feat opeartions
         self.patch_stide = patch_stride
@@ -235,10 +227,6 @@ class Net(nn.Module):
         self.gatlayer2 = GATv2Layer(in_features, in_features, n_heads, is_concat, dropout , leaky_relu_slop, share_weights)
 
         #adaptive instance normalization
-        if self.modulated_adain:
-            #initialize input dim with content features:
-            self.adain = AdaIn(256, 128)
-
         
 
     def forward(self, style, content):
@@ -265,11 +253,10 @@ class Net(nn.Module):
         final_content = feat2patch(final_content_patches)
 
         #adaptive instance normalization:
-        if self.modulated_adain:
-            normalized_content = self.adain(final_content, encoded_style)
-        else:
-            normalized_content = adaptive_instance_normalization(final_content, encoded_style)
+
+        normalized_content = adaptive_instance_normalization(final_content, encoded_style)
 
         output = self.decoder(normalized_content)
 
         return output
+

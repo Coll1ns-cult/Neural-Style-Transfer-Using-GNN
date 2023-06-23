@@ -16,7 +16,7 @@ Made
  - Implementing Deformable Patch for style graph node construction.
 
 # Results
-Soon
+In code.ipynb file
 # Theoritical work
-Soon
+The idea was to utilize the fact that constructed style to content graph to be a bipartite graph in a way such that GATv2 performs much better compared to GAT in bipartite graphs, proven in the section Synthetic benchmark dictionary lookup in the paper of GATv2
 
